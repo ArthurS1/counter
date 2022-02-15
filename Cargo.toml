@@ -15,6 +15,6 @@ actix-web = "3"
 serde = "1.0.132"
 
 [dependencies.mongodb]
-version = "2.1.0"
+version = "1.2.5"
 default-features = false
 features = ["tokio-runtime"]

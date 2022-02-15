@@ -16,7 +16,7 @@ COPY ./Cargo.lock /app/Cargo.lock
 RUN sed -i 's/src\/main.rs/dummy.rs/g' Cargo.toml
 
 # build and cache dependencies
-RUN cargo build --release
+RUN cargo build #--release
 
 # reverses step 5
 RUN sed -i 's/dummy.rs/src\/main.rs/g' Cargo.toml
@@ -25,8 +25,8 @@ RUN sed -i 's/dummy.rs/src\/main.rs/g' Cargo.toml
 COPY . /app
 
 # build source code (dependencies already cached)
-RUN cargo build --offline --release
+RUN cargo build --offline #--release
 
 EXPOSE 8080
 
-CMD ["cargo", "run", "--release"]
+CMD ["cargo", "run"]

@@ -7,9 +7,12 @@ use actix_web::{
     Result};
 use serde::Serialize;
 use serde::Deserialize;
-
+use std::sync::Mutex;
 use mongodb::{
-    bson::doc,
+    bson::{
+        doc,
+        Bson,
+    },
     Client,
 };
 
@@ -27,10 +30,14 @@ async fn connect(addrs: &str) -> Client
 {
     let client = Client::with_uri_str(addrs);
 
+    std::thread::sleep(std::time::Duration::new(5, 0));
     match client.await {
         Err(_) => panic!("Failed to connect to MongoDB"),
         Ok(client) => {
-            match client.database("counter").run_command(doc! {"ping": 1}, None).await {
+            match client
+                .database("counter")
+                .run_command(doc! {"ping": 1}, None)
+                .await {
                 Err(_) => panic!("Failed pinging MongoDB"),
                 Ok(_) => client,
             }
@@ -39,36 +46,67 @@ async fn connect(addrs: &str) -> Client
 }
 
 #[get("/")]
-async fn status() -> Result<impl Responder>
+async fn status(data: web::Data<Mutex<Client>>) -> Result<impl Responder>
 {
+    let counter_collection = data
+        .lock()
+        .unwrap()
+        .database("test")
+        .collection("counter");
+    let document = counter_collection.find_one(doc! {}, None).await.unwrap().unwrap();
+    let obj = CounterInfos {
+        counter: document.get("counter").and_then(Bson::as_i32).unwrap(),
+    };
+
     println!("GET /");
-    let obj = CounterInfos {
-        counter: 0,
-    };
     Ok(web::Json(obj))
 }
 
-async fn increment(req: web::Json<CounterUpdate>) -> Result <impl Responder>
+async fn increment(req: web::Json<CounterUpdate>, data: web::Data<Mutex<Client>>) -> Result <impl Responder>
 {
-    println!("POST /mod");
+    let counter_collection = data
+        .lock()
+        .unwrap()
+        .database("test")
+        .collection("counter");
+    let document = counter_collection.find_one(doc! {}, None).await.unwrap().unwrap();
+    let new_value = document.get("counter").and_then(Bson::as_i32).unwrap() + req.modifier;
     let obj = CounterInfos {
-        counter: req.modifier,
+        counter: new_value,
     };
-    Ok(web::Json(obj))
-}
 
+    match counter_collection.update_one(doc! {}, doc! {"counter": new_value}, None).await {
+        Err(_) => panic!("Failed to update counter"),
+        Ok(_) => {
+            println!("POST /mod");
+            Ok(web::Json(obj))
+        }
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
 {
-    println!("Connecting to db");
-    connect("mongodb+srv://<username>:<password>@<cluster-url>/test?w=majority").await;
+    let mongo_client = connect("mongodb://root:example@db").await;
+    let client: web::Data<Mutex<Client>> = web::Data::new(Mutex::new(mongo_client));
+    let counter_collection = client
+        .lock()
+        .unwrap()
+        .database("test")
+        .collection("counter");
+
+    match counter_collection.insert_one(doc! {"counter": 1}, None).await {
+        Err(_) => panic!("Failed to insert counter doc"),
+        Ok(_) => println!("Inserted counter successfully"),
+    }
     println!("Launching web server on {}:{}...", "0.0.0.0", "8080");
     println!("Try the / and /mod routes!");
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .app_data(client.clone())
             .service(status)
-            .route("/mod", web::post().to(increment))
+            .route("/mod", web::post()
+            .to(increment))
     })
     .bind("0.0.0.0:8080")?
     .run()
